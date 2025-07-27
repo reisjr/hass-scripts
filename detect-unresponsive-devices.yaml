@@ -1,0 +1,92 @@
+# https://community.home-assistant.io/t/detecting-unresponsive-devices/658030/4
+
+script:
+  connectivity_check:
+    alias: "Connection check: Check connectivity for all devices"
+    mode: queued
+    variables:
+      devices: >-
+        {# create empty list to hold the devices #}
+        {% set ns = namespace(devices = []) %}
+
+        {# loop through binary sensor entities #}
+        {% for entity in (states.binary_sensor | map(attribute='entity_id') | list) %}
+          {# ignore everything which does not have a device #}
+          {% if device_attr(entity, 'name_by_user') != none %}
+            {# this is to avoid doubled entries, so remove possible former entries and add a new one #}
+            {% set ns.devices = ns.devices | reject('in', [(device_attr(entity, 'name_by_user'), area_name(entity))]) | list %}
+            {% set ns.devices = ns.devices + [(device_attr(entity, 'name_by_user'), area_name(entity))] %}
+          {% endif %}
+        {% endfor %}
+
+        {# loop through sensor entities #}
+        {% for entity in (states.sensor | map(attribute='entity_id') | list) %}
+          {# ignore everything which does not have a device #}
+          {% if device_attr(entity, 'name_by_user') != none %}
+            {# this is to avoid doubled entries, so remove possible former entries and add a new one #}
+            {% set ns.devices = ns.devices | reject('in', [(device_attr(entity, 'name_by_user'), area_name(entity))]) | list %}
+            {% set ns.devices = ns.devices + [(device_attr(entity, 'name_by_user'), area_name(entity))] %}
+          {% endif %}
+        {% endfor %}
+
+        {# loop again through binary sensor entities #}
+        {% for entity in (states.binary_sensor | map(attribute='entity_id') | list) %}
+          {# ignore everything which does not have a device #}
+          {% if device_attr(entity, 'name_by_user') != none %}
+            {# look at last changed #}
+            {% if states[entity].last_changed != 'unknown' and states[entity].last_changed != 'unavailable' %}
+              {% if states[entity].last_changed > (now() - timedelta(hours=16)) %}
+                {# remove every entry where any entity of the device was changed within the last 16 hours #}
+                {% set ns.devices = ns.devices | reject('in', [(device_attr(entity, 'name_by_user'), area_name(entity))]) | list %}
+              {% endif %}
+            {% endif %}
+            {# look at last updated #}
+            {% if states[entity].last_updated != 'unknown' and states[entity].last_updated != 'unavailable' %}
+              {% if states[entity].last_updated > (now() - timedelta(hours=16)) %}
+                {# remove every entry where any entity of the device was updated within the last 16 hours #}
+                {% set ns.devices = ns.devices | reject('in', [(device_attr(entity, 'name_by_user'), area_name(entity))]) | list %}
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+
+        {# loop again through sensor entities #}
+        {% for entity in (states.sensor | map(attribute='entity_id') | list) %}
+          {# ignore everything which does not have a device #}
+          {% if device_attr(entity, 'name_by_user') != none %}
+            {# look at last changed #}
+            {% if states[entity].last_changed != 'unknown' and states[entity].last_changed != 'unavailable' %}
+              {% if states[entity].last_changed > (now() - timedelta(hours=8)) %}
+                {# remove every entry where any entity of the device was changed within the last 8 hours #}
+                {% set ns.devices = ns.devices | reject('in', [(device_attr(entity, 'name_by_user'), area_name(entity))]) | list %}
+              {% endif %}
+            {% endif %}
+            {# look at last updated #}
+            {% if states[entity].last_updated != 'unknown' and states[entity].last_updated != 'unavailable' %}
+              {% if states[entity].last_updated > (now() - timedelta(hours=8)) %}
+                {# remove every entry where any entity of the device was updated within the last 8 hours #}
+                {% set ns.devices = ns.devices | reject('in', [(device_attr(entity, 'name_by_user'), area_name(entity))]) | list %}
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+
+        {# remove any device from the blacklist #}
+        {% for device in ns.devices %}
+          {% if device[0] in state_attr('input_select.connectivity_check_blacklist', 'options') %}
+            {% set ns.devices = ns.devices | reject('in', [(device[0], device[1])]) | list %}
+          {% endif %}
+        {% endfor %}
+
+        {# here we have our devices list #}
+        {{ ns.devices }}
+    sequence:
+      - repeat:
+          # loop through our devices
+          for_each: "{{ devices }}"
+          sequence:
+            # send message
+            - service: script.message_warning_device_offline
+              data_template:
+                device: "{{ repeat.item[0] }}"
+                area: "{{ repeat.item[1] }}"
